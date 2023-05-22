@@ -20,6 +20,7 @@
 
 /* Includes ------------------------------------------------------------------*/
 #include "usbd_cdc_if.h"
+#include "usb_device.h"
 
 /* USER CODE BEGIN INCLUDE */
 
@@ -106,10 +107,8 @@ uint8_t UserTxBufferFS[APP_TX_DATA_SIZE];
  * @{
  */
 
-extern USBD_HandleTypeDef hUsbDeviceFS;
-extern USBD_CDC_LineCodingTypeDef USBD_LC;
+volatile uint8_t v_start_bit = DYNO_STARTED;
 
-extern volatile uint8_t v_usb_cmd_bit;
 /* USER CODE BEGIN EXPORTED_VARIABLES */
 
 /* USER CODE END EXPORTED_VARIABLES */
@@ -212,10 +211,15 @@ static int8_t CDC_Control_FS(uint8_t cmd, uint8_t *pbuf, uint16_t length) {
         /* 6      | bDataBits  |   1   | Number Data bits (5, 6, 7, 8 or 16).          */
         /*******************************************************************************/
     case CDC_SET_LINE_CODING:
-        USBD_LC.bitrate = BAUD(pbuf);
+        USBD_LC.bitrate = (uint32_t)(pbuf[0] | (pbuf[1] << 8) | (pbuf[2] << 16) | (pbuf[3] << 24));
         USBD_LC.format = pbuf[4];
         USBD_LC.paritytype = pbuf[5];
         USBD_LC.datatype = pbuf[6];
+        // set line coding, anggap saja sudah ke open sama host :v
+        if (!v_start_bit) {
+            v_start_bit = DYNO_STARTED;
+            MX_Start();
+        }
         break;
 
     case CDC_GET_LINE_CODING:
@@ -226,19 +230,27 @@ static int8_t CDC_Control_FS(uint8_t cmd, uint8_t *pbuf, uint16_t length) {
         pbuf[4] = USBD_LC.format;
         pbuf[5] = USBD_LC.paritytype;
         pbuf[6] = USBD_LC.datatype;
-        CDC_Transmit_FS(&pbuf[0], sizeof(USBD_CDC_LineCodingTypeDef));
-        break;
+        return CDC_Transmit_FS(&pbuf[0], sizeof(USBD_CDC_LineCodingTypeDef));
 
-    case CDC_SET_CONTROL_LINE_STATE:
-
-        break;
+    case CDC_SET_CONTROL_LINE_STATE: {
+        // check apakah state DTR bit ke set, dengan, jika ya, v_start_bit set juga
+        uint16_t dtr_is_set = (((USBD_SetupReqTypedef *)pbuf)->wValue & 0x0001);
+        if ((dtr_is_set == 0) && (v_start_bit == DYNO_STARTED)) {
+            v_start_bit = DYNO_STOPPED;
+            MX_Stop();
+            return (USBD_OK);
+        } else if ((dtr_is_set != 0) && (v_start_bit == DYNO_STOPPED)) {
+            v_start_bit = DYNO_STARTED;
+            MX_Start();
+        }
+    } break;
 
     case CDC_SEND_BREAK:
 
         break;
 
     default:
-        break;
+        return (USBD_OK);
     }
 
     return (USBD_OK);
@@ -264,9 +276,6 @@ static int8_t CDC_Receive_FS(uint8_t *Buf, uint32_t *Len) {
     /* USER CODE BEGIN 6 */
     USBD_CDC_SetRxBuffer(&hUsbDeviceFS, &Buf[0]);
     USBD_CDC_ReceivePacket(&hUsbDeviceFS);
-    if (strncmp((const char *)&Buf[0], "cmd:", 4) == 0 && *Len >= 4) {
-        v_usb_cmd_bit = Buf[4];
-    }
     return (USBD_OK);
     /* USER CODE END 6 */
 }

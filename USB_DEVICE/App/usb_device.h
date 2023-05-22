@@ -27,8 +27,13 @@ extern "C" {
 /* Includes ------------------------------------------------------------------*/
 #include "stm32f4xx.h"
 #include "stm32f4xx_hal.h"
+#include "usbd_cdc_if.h"
+#include "usbd_core.h"
+#include "usbd_desc.h"
 #include "usbd_def.h"
 
+extern USBD_HandleTypeDef hUsbDeviceFS;
+extern USBD_CDC_LineCodingTypeDef USBD_LC;
 /** USB Device initialization function. */
 void MX_USB_DEVICE_Init(void);
 

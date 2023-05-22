@@ -10,6 +10,7 @@ TARGET = dyno_stm32
 ######################################
 # debug build?
 DEBUG := 1
+OPT := -O2
 
 # optimization
 ifeq ($(DEBUG), 1)
@@ -19,7 +20,6 @@ OPT = -Og
 else
 # Build path
 BUILD_DIR = build/release
-OPT = -O2
 endif
 
 ######################################
@@ -73,6 +73,9 @@ AS_DEFS =
 
 # C defines
 C_DEFS =  -DUSE_HAL_DRIVER -DSTM32F411xE
+ifeq ($(DEBUG), 1)
+	C_DEFS += -DDEBUG_BUILD
+endif
 
 # AS includes
 AS_INCLUDES = 
@@ -83,8 +86,8 @@ C_INCLUDES += -I/usr/arm-none-eabi/include
 
 
 # compile gcc flags
-ASFLAGS = $(MCU) $(AS_DEFS) $(AS_INCLUDES) $(OPT) -Wall -Wno-unused-function -fdata-sections -ffunction-sections -fdiagnostics-color=always
-CFLAGS += $(MCU) $(C_DEFS) $(C_INCLUDES) $(OPT) -Wall -Wno-unused-function -fdata-sections -ffunction-sections -fdiagnostics-color=always
+ASFLAGS = $(MCU) $(AS_DEFS) $(AS_INCLUDES) $(OPT) -Wall -Wextra -Wno-unused-function -fdata-sections -ffunction-sections -fdiagnostics-color=always
+CFLAGS += $(MCU) $(C_DEFS) $(C_INCLUDES) $(OPT) -Wall -Wextra -Wno-unused-function -fdata-sections -ffunction-sections -fdiagnostics-color=always
 
 ifeq ($(DEBUG), 1)
 CFLAGS += -g -gdwarf-2
@@ -104,4 +107,4 @@ LDSCRIPT = STM32F411CEUx_FLASH.ld
 # libraries
 LIBS = -lc # -lnosys
 LIBDIR = 
-LDFLAGS = $(MCU) -specs=nano.specs -T$(LDSCRIPT) $(LIBDIR) $(LIBS) -Wl,-Map=$(BUILD_DIR)/$(TARGET).map,--cref -Wl,--gc-sections -Wl,--no-warn-rwx-segment -fdiagnostics-color=always
+LDFLAGS = $(MCU) -specs=nano.specs -T$(LDSCRIPT) $(LIBDIR) $(LIBS) -Wl,-Map=$(BUILD_DIR)/$(TARGET).map,--cref -Wl,--gc-sections -Wl,--no-warn-rwx-segment  -Wl,--print-memory-usage  -fdiagnostics-color=always

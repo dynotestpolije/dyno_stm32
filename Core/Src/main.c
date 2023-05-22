@@ -18,6 +18,9 @@
 #include <usb_device.h>
 #include <usbd_cdc_if.h>
 
+#define DYNO_IMPLEMENTATION
+#include <dyno.h>
+
 /* Private variables ---------------------------------------------------------*/
 SPI_HandleTypeDef hspi_max6675;
 
@@ -29,13 +32,12 @@ TIM_HandleTypeDef htim_rpm;
 TIM_HandleTypeDef htim_phase_z;
 #endif
 
-volatile uint8_t v_usb_cmd_bit = USBCMD_NOOP;
 volatile uint8_t v_usb_send_bit = SENDBIT_DISABLE;
-uint8_t start_bit = DYNO_STARTED;
+volatile uint8_t v_usb_opened = DYNO_STARTED;
 
 #define BUFFER_DATA_SIZE DYNO_SIZE_DATA + 1
 static uint8_t BUFFER_DATA[BUFFER_DATA_SIZE] = {[DYNO_SIZE_DATA] = '\n'};
-static DataDyno dyno = DATA_DYNO_INIT;
+static DataDyno dyno = {0};
 
 static uint32_t last_time = 0;
 
@@ -52,11 +54,7 @@ static void MX_TIMPhaseZ_Init(void);
 static void MX_NVIC_Init(void);
 static void MX_NVIC_DeInit(void);
 
-static void MX_Start(void);
-static void MX_Stop(void);
-
 static HAL_StatusTypeDef MAX6675_Temp(float *data_temp);
-
 /**
  * @brief  The application entry point.
  * @retval int
@@ -79,10 +77,27 @@ int main(void) {
     MX_TIMPhaseZ_Init();
 #endif
     MX_USB_DEVICE_Init();
-
     /* Infinite loop */
+    // first initialize data
+    dyno = datadyno_create_static();
+
     while (1) {
-        if (v_usb_send_bit == SENDBIT_ENABLE && start_bit == DYNO_STARTED) {
+#ifdef DEBUG_BUILD
+        {
+            uint32_t now = HAL_GetTick();
+            dyno.pulse_enc = now % 5000;
+            dyno.pulse_rpm = now % 50;
+            dyno.period = now - last_time;
+            dyno.time = now;
+            last_time = now;
+            dyno.temperature = (float)(now % 400);
+
+            memcpy(&BUFFER_DATA[0], &dyno, DYNO_SIZE_DATA);
+            CDC_Transmit_FS(BUFFER_DATA, BUFFER_DATA_SIZE);
+            HAL_Delay(250);
+        }
+#else
+        if (v_usb_send_bit == SENDBIT_ENABLE && CDC_IS_USB_OPENED(hUsbDeviceFS)) {
             uint32_t now = HAL_GetTick();
 
             dyno.pulse_enc_raw = GET_COUNTER(htim_encoder);
@@ -110,23 +125,7 @@ int main(void) {
             // set low led indicator 2
             GPIOA->BSRR = LED_INDICATOR_2_Pin;
         }
-
-        if (v_usb_cmd_bit != USBCMD_NOOP) {
-            switch (v_usb_cmd_bit) {
-            case USBCMD_START:
-                MX_Start();
-                break;
-            case USBCMD_STOP:
-                MX_Stop();
-                break;
-            case USBCMD_RESTART:
-                HAL_NVIC_SystemReset();
-                break;
-            default:
-                break;
-            }
-            v_usb_cmd_bit = USBCMD_NOOP;
-        }
+#endif
     }
 }
 
@@ -138,38 +137,34 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
     }
 }
 
-static void MX_Start(void) {
+void MX_Start(void) {
+#ifndef DEBUG_BUILD
     MX_NVIC_Init();
-
-    if (HAL_OK != HAL_TIM_Encoder_Start(&htim_encoder, TIM_CHANNEL_ENC)) {
-        // assert_param() Error_Send("Failed to start `HAL_TIM_Encoder_Start`");
-    }
+    HAL_TIM_Encoder_Start(&htim_encoder, TIM_CHANNEL_ENC);
     HAL_TIM_Base_Start(&htim_send_timer);
     HAL_TIM_IC_Start(&htim_rpm, TIM_CHANNEL_RPM);
-
 #ifdef WITH_PHASE_Z
     HAL_TIM_IC_Start(&htim_phase_z, TIM_CHANNEL_PHASE_Z);
 #endif
+#endif
 
-    start_bit = DYNO_STARTED;
     last_time = HAL_GetTick();
     HAL_GPIO_WritePin(GPIOA, LED_INDICATOR_1_Pin, GPIO_PIN_SET);
 }
 
-static void MX_Stop(void) {
+void MX_Stop(void) {
+#ifndef DEBUG_BUILD
     MX_NVIC_DeInit();
     HAL_TIM_Encoder_Stop(&htim_encoder, TIM_CHANNEL_ENC);
     HAL_TIM_Base_Stop(&htim_send_timer);
     HAL_TIM_IC_Stop(&htim_rpm, TIM_CHANNEL_RPM);
-
 #ifdef WITH_PHASE_Z
     HAL_TIM_IC_Stop(&htim_phase_z, TIM_CHANNEL_PHASE_Z);
 #endif
-
+#endif
     // reset the data
-    dyno = (DataDyno)DATA_DYNO_INIT;
+    dyno = datadyno_create_static();
 
-    start_bit = DYNO_STOPPED;
     HAL_GPIO_WritePin(GPIOA, LED_INDICATOR_1_Pin, GPIO_PIN_RESET);
 }
 

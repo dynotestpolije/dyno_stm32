@@ -19,10 +19,6 @@
 /* Includes ------------------------------------------------------------------*/
 
 #include "usb_device.h"
-#include "usbd_cdc.h"
-#include "usbd_cdc_if.h"
-#include "usbd_core.h"
-#include "usbd_desc.h"
 
 /* USB Device Core handle declaration. */
 USBD_HandleTypeDef hUsbDeviceFS;

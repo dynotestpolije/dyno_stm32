@@ -35,13 +35,15 @@ extern "C" {
  */
 /* Define size for the receive and transmit buffer over CDC */
 #define APP_RX_DATA_SIZE 1024
-#define APP_TX_DATA_SIZE 1024
+#define APP_TX_DATA_SIZE (8 * 1024)
 
 /** CDC Interface callback. */
 extern USBD_CDC_ItfTypeDef USBD_Interface_fops_FS;
+extern volatile uint8_t v_start_bit;
 
 uint8_t CDC_Transmit_FS(uint8_t *Buf, uint16_t Len);
 
+#define CDC_IS_USB_OPENED(hUsbFs) (((hUsbFs).dev_state == USBD_STATE_CONFIGURED) && (v_start_bit))
 #ifdef __cplusplus
 }
 #endif

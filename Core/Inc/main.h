@@ -50,55 +50,15 @@ void Error_Handler(void);
 #define RPM_INPUT_CAPTURE_Pin       GPIO_PIN_9
 #define RPM_INPUT_CAPTURE_GPIO_Port GPIOB
 
-/* USER CODE BEGIN Private defines */
-#ifndef MAX_PULSE_RER_ROTATION
-#define MAX_PULSE_RER_ROTATION 360
-#endif
+#define DYNO_STARTED                0x0
+#define DYNO_STOPPED                0x1
+#define SENDBIT_DISABLE             0x0
+#define SENDBIT_ENABLE              0x1
+#define MAX6675_NOT_CONNECTED       0x0
+#define MAX6675_CONNECTED           0x1
 
-#define DYNO_STARTED          0x0
-#define DYNO_STOPPED          0x1
-#define SENDBIT_DISABLE       0x0
-#define SENDBIT_ENABLE        0x1
-#define MAX6675_NOT_CONNECTED 0x0
-#define MAX6675_CONNECTED     0x1
-
-typedef enum {
-    USBCMD_NOOP = 0x0,
-    USBCMD_START = 0x1,
-    USBCMD_STOP = 0x2,
-    USBCMD_RESTART = 0x3,
-    USBCMD_SHUTDOWN = 0x4
-} DYNO_USBCmd;
-// pub time: u32, // in ms
-// pub pulse_encoder_max: u32,
-// pub pulse_encoder: u32,
-// pub pulse_rpm: u32,
-// pub temperature: f32,
-typedef struct {
-    uint32_t time;
-    uint32_t period;
-    uint32_t pulse_encoder_max;
-    uint32_t pulse_enc_raw;
-    uint32_t pulse_enc;
-    uint32_t pulse_enc_z;
-    uint32_t pulse_rpm;
-    float temperature;
-} DataDyno;
-
-#define DYNO_SIZE_DATA sizeof(DataDyno)
-#define DATA_DYNO_INIT                                                                             \
-    {                                                                                              \
-        .time = 0,                                                                                 \
-        .period = 0,                                                                               \
-        .pulse_encoder_max = MAX_PULSE_RER_ROTATION,                                               \
-        .pulse_enc = 0,                                                                            \
-        .pulse_enc_z = 0,                                                                          \
-        .pulse_rpm = 0,                                                                            \
-        .temperature = 0.0,                                                                        \
-    };
-
-#define TIM_CHANNEL_ENC TIM_CHANNEL_ALL
-#define TIM_CHANNEL_RPM TIM_CHANNEL_4
+#define TIM_CHANNEL_ENC             TIM_CHANNEL_ALL
+#define TIM_CHANNEL_RPM             TIM_CHANNEL_4
 
 #ifdef WITH_PHASE_Z
 #define TIM_CHANNEL_PHASE_Z TIM_CHANNEL_3
@@ -118,6 +78,9 @@ typedef struct {
     if (CALL == HAL_ERROR) {                                                                       \
         Error_Handler();                                                                           \
     }
+
+void MX_Start(void);
+void MX_Stop(void);
 
 /* USER CODE END Private defines */
 
