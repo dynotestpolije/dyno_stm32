@@ -4,22 +4,29 @@
 ######################################
 TARGET = dyno_stm32
 
+######################################
+# dyno configuration
+######################################
+MAX_PPR_ENCODER = 360
+MAX_RPM_ENCODER = 6000
+PERIOD_SEND_DATA_MS = 250
+
 
 ######################################
 # building variables
 ######################################
 # debug build?
 DEBUG := 1
-OPT := -O2
 
 # optimization
 ifeq ($(DEBUG), 1)
 # Build path
 BUILD_DIR = build/debug
-OPT = -Og
+OPT := -Og
 else
 # Build path
 BUILD_DIR = build/release
+OPT = -O2
 endif
 
 ######################################
@@ -72,11 +79,11 @@ MCU = $(CPU) -mthumb $(FPU) $(FLOAT-ABI)
 AS_DEFS = 
 
 # C defines
-C_DEFS =  -DUSE_HAL_DRIVER -DSTM32F411xE
-ifeq ($(DEBUG), 1)
-	C_DEFS += -DDEBUG_BUILD
-endif
-
+C_DEFS =  -DUSE_HAL_DRIVER -DSTM32F411xE 
+#-DWITH_PHASE_Z
+C_DEFS += -DMAX_PPR_ENCODER=$(MAX_PPR_ENCODER) 
+C_DEFS += -DMAX_RPM_ENCODER=$(MAX_RPM_ENCODER)
+C_DEFS += -DPERIOD_SEND_DATA_MS=$(PERIOD_SEND_DATA_MS)
 # AS includes
 AS_INCLUDES = 
 
@@ -86,8 +93,15 @@ C_INCLUDES += -I/usr/arm-none-eabi/include
 
 
 # compile gcc flags
-ASFLAGS = $(MCU) $(AS_DEFS) $(AS_INCLUDES) $(OPT) -Wall -Wextra -Wno-unused-function -fdata-sections -ffunction-sections -fdiagnostics-color=always
-CFLAGS += $(MCU) $(C_DEFS) $(C_INCLUDES) $(OPT) -Wall -Wextra -Wno-unused-function -fdata-sections -ffunction-sections -fdiagnostics-color=always
+ASFLAGS = $(MCU) $(AS_DEFS) $(AS_INCLUDES) $(OPT) 
+ASFLAGS += -Wall -Wextra -Wno-unused-function -fdata-sections 
+ASFLAGS += -ffunction-sections -fdiagnostics-color=always
+ASFLAGS += -Wno-unused-parameter
+
+CFLAGS += $(MCU) $(C_DEFS) $(C_INCLUDES) $(OPT) 
+CFLAGS += -Wall -Wextra -Wno-unused-function -fdata-sections 
+CFLAGS += -ffunction-sections -fdiagnostics-color=always
+CFLAGS += -Wno-unused-parameter
 
 ifeq ($(DEBUG), 1)
 CFLAGS += -g -gdwarf-2
@@ -105,6 +119,7 @@ CFLAGS += -MMD -MP -MF"$(@:%.o=%.d)"
 LDSCRIPT = STM32F411CEUx_FLASH.ld
 
 # libraries
-LIBS = -lc # -lnosys
+LIBS = -lc 
+# -lnosys
 LIBDIR = 
 LDFLAGS = $(MCU) -specs=nano.specs -T$(LDSCRIPT) $(LIBDIR) $(LIBS) -Wl,-Map=$(BUILD_DIR)/$(TARGET).map,--cref -Wl,--gc-sections -Wl,--no-warn-rwx-segment  -Wl,--print-memory-usage  -fdiagnostics-color=always

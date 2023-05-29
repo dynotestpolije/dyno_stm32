@@ -22,10 +22,10 @@ all: check options build
 build: $(BUILD_DIR)/$(TARGET).elf $(BUILD_DIR)/$(TARGET).hex $(BUILD_DIR)/$(TARGET).bin
 
 debug:
-	@make -j build DEBUG=1 
+	@make -j5 build DEBUG=1 
 
 release: 
-	@make -j build DEBUG=0
+	@make -j5 build DEBUG=0
 
 debug_clean:
 	@make clean DEBUG=1

@@ -1,6 +1,6 @@
 /**
  **************************************************************************************************
- * @file           : main.c
+ ** @file           : main.c
  * @brief          : Main program body
  **************************************************************************************************
  *
@@ -14,6 +14,7 @@
  **************************************************************************************************
  */
 /* Includes ------------------------------------------------------------------*/
+
 #include <main.h>
 #include <usb_device.h>
 #include <usbd_cdc_if.h>
@@ -23,7 +24,6 @@
 
 /* Private variables ---------------------------------------------------------*/
 SPI_HandleTypeDef hspi_max6675;
-
 TIM_HandleTypeDef htim_encoder;
 TIM_HandleTypeDef htim_send_timer;
 TIM_HandleTypeDef htim_rpm;
@@ -33,13 +33,13 @@ TIM_HandleTypeDef htim_phase_z;
 #endif
 
 volatile uint8_t v_usb_send_bit = SENDBIT_DISABLE;
-volatile uint8_t v_usb_opened = DYNO_STARTED;
+volatile uint32_t v_pulse_rpm = 0;
+volatile uint32_t v_pulse_encz = 0;
+volatile uint32_t v_pulse_enc = 0;
 
 #define BUFFER_DATA_SIZE DYNO_SIZE_DATA + 1
 static uint8_t BUFFER_DATA[BUFFER_DATA_SIZE] = {[DYNO_SIZE_DATA] = '\n'};
 static DataDyno dyno = {0};
-
-static uint32_t last_time = 0;
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
@@ -77,95 +77,103 @@ int main(void) {
     MX_TIMPhaseZ_Init();
 #endif
     MX_USB_DEVICE_Init();
-    /* Infinite loop */
+
     // first initialize data
-    dyno = datadyno_create_static();
+    datadyno_reset(&dyno);
+    uint32_t last_time = 0;
 
+    // start the non blocking (interrupt) operation
+    MX_Start();
+
+    /* Infinite loop */
+    const uint32_t MAX_PULSE_ENC = MAX_PULSE_ENCODER;
     while (1) {
-#ifdef DEBUG_BUILD
-        {
-            uint32_t now = HAL_GetTick();
-            dyno.pulse_enc = now % 5000;
-            dyno.pulse_rpm = now % 50;
-            dyno.period = now - last_time;
-            dyno.time = now;
-            last_time = now;
-            dyno.temperature = (float)(now % 400);
+        // check if the `v_usb_send_bit` is set by interrupt, for time to sending data
+        // and check if CDC USBDevice Driver is ready and opened
+        if (v_usb_send_bit == SENDBIT_ENABLE && CDC_IS_USB_OPENED(&hUsbDeviceFS)) {
+            // reset sendbit
+            v_usb_send_bit = SENDBIT_DISABLE;
+            // check first if counter is CCW ( the required direction )
+            // while encoder in CW the `pulse_enc` value is overflow ( MAX_VALUE_32BIT - pulse )
+            // if the `pulse_enc` is over the max PPR specification, set the `dyno.pulse_enc_raw` to
+            // last value
+            dyno.pulse_enc_raw = (v_pulse_enc > MAX_PULSE_ENC) ? dyno.pulse_enc_raw : v_pulse_enc;
+            dyno.pulse_enc = dyno.pulse_enc_raw; // * PRESCALAR_ENCODER_PULSE;
 
-            memcpy(&BUFFER_DATA[0], &dyno, DYNO_SIZE_DATA);
-            CDC_Transmit_FS(BUFFER_DATA, BUFFER_DATA_SIZE);
-            HAL_Delay(250);
-        }
-#else
-        if (v_usb_send_bit == SENDBIT_ENABLE && CDC_IS_USB_OPENED(hUsbDeviceFS)) {
-            uint32_t now = HAL_GetTick();
-
-            dyno.pulse_enc_raw = GET_COUNTER(htim_encoder);
-            dyno.pulse_rpm = GET_COUNTER_CH(htim_rpm, CH_RPM);
+            dyno.pulse_rpm = v_pulse_rpm;
 #ifdef WITH_PHASE_Z
-            dyno.pulse_enc_z = GET_COUNTER_CH(htim_phase_z, CH_PHASE_Z);
+            dyno.pulse_enc_z = v_pulse_encz;
 #endif
-            dyno.pulse_enc = dyno.pulse_enc_raw * 4;
+
+            uint32_t now = HAL_GetTick();
             dyno.period = now - last_time;
-            dyno.time = now;
             last_time = now;
+
             MAX6675_Temp(&dyno.temperature);
 
+            /// copying the data in the bytes of `dyno` into BUFFER_DATA bytes
             memcpy(&BUFFER_DATA[0], &dyno, DYNO_SIZE_DATA);
+            /// sending the bytes BUFFER_DATA with offset of `BUFFER_DATA_SIZE` that ends with
+            /// newline character `\n`
             CDC_Transmit_FS(BUFFER_DATA, BUFFER_DATA_SIZE);
 
             // reset the counter
-            RESET_COUNTER(htim_encoder);
-            RESET_COUNTER_CH(htim_rpm, CH_RPM);
+            v_pulse_enc = 0;
+            v_pulse_rpm = 0;
 #ifdef WITH_PHASE_Z
-            RESET_COUNTER_CH(htim_phase_z, CH_PHASE_Z);
+            v_pulse_encz = 0;
 #endif
-            // reset sendbit
-            v_usb_send_bit = SENDBIT_DISABLE;
             // set low led indicator 2
-            GPIOA->BSRR = LED_INDICATOR_2_Pin;
+            RESET_PIN(LED_INDICATOR_2_GPIO_Port, LED_INDICATOR_2_Pin);
         }
-#endif
     }
+}
+
+void MX_Start(void) {
+    MX_NVIC_Init();
+    HAL_TIM_Encoder_Start(&htim_encoder, TIM_CHANNEL_ENC);
+    HAL_TIM_Base_Start_IT(&htim_send_timer);
+    HAL_TIM_IC_Start_IT(&htim_rpm, TIM_CHANNEL_RPM);
+#ifdef WITH_PHASE_Z
+    HAL_TIM_IC_Start_IT(&htim_phase_z, TIM_CHANNEL_PHASE_Z);
+#endif
+    SET_PIN(LED_INDICATOR_1_GPIO_Port, LED_INDICATOR_1_Pin);
+}
+
+void MX_Stop(void) {
+    MX_NVIC_DeInit();
+    HAL_TIM_Encoder_Stop(&htim_encoder, TIM_CHANNEL_ENC);
+    HAL_TIM_Base_Stop_IT(&htim_send_timer);
+    HAL_TIM_IC_Stop_IT(&htim_rpm, TIM_CHANNEL_RPM);
+#ifdef WITH_PHASE_Z
+    HAL_TIM_IC_Stop_IT(&htim_phase_z, TIM_CHANNEL_PHASE_Z);
+#endif
+    // reset the data
+    datadyno_reset(&dyno);
+
+    RESET_PIN(LED_INDICATOR_1_GPIO_Port, LED_INDICATOR_1_Pin);
 }
 
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
     if (htim->Instance == TIM3) {
         // set high led indicator 2
-        GPIOA->BSRR = (uint32_t)LED_INDICATOR_2_Pin << 16U;
+        SET_PIN(LED_INDICATOR_2_GPIO_Port, LED_INDICATOR_2_Pin);
+        v_pulse_enc = GET_COUNTER(htim_encoder);
+        RESET_COUNTER(htim_encoder);
         v_usb_send_bit = SENDBIT_ENABLE;
     }
 }
 
-void MX_Start(void) {
-#ifndef DEBUG_BUILD
-    MX_NVIC_Init();
-    HAL_TIM_Encoder_Start(&htim_encoder, TIM_CHANNEL_ENC);
-    HAL_TIM_Base_Start(&htim_send_timer);
-    HAL_TIM_IC_Start(&htim_rpm, TIM_CHANNEL_RPM);
+void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim) {
+    if (htim->Instance == TIM4 && htim->Channel == HAL_TIM_ACTIVE_CHANNEL_4) {
+        v_pulse_rpm += 1;
+    }
+
 #ifdef WITH_PHASE_Z
-    HAL_TIM_IC_Start(&htim_phase_z, TIM_CHANNEL_PHASE_Z);
+    if (htim->Instance == TIM5 && htim->Channel == HAL_TIM_ACTIVE_CHANNEL_3) {
+        v_pulse_encz += 1;
+    }
 #endif
-#endif
-
-    last_time = HAL_GetTick();
-    HAL_GPIO_WritePin(GPIOA, LED_INDICATOR_1_Pin, GPIO_PIN_SET);
-}
-
-void MX_Stop(void) {
-#ifndef DEBUG_BUILD
-    MX_NVIC_DeInit();
-    HAL_TIM_Encoder_Stop(&htim_encoder, TIM_CHANNEL_ENC);
-    HAL_TIM_Base_Stop(&htim_send_timer);
-    HAL_TIM_IC_Stop(&htim_rpm, TIM_CHANNEL_RPM);
-#ifdef WITH_PHASE_Z
-    HAL_TIM_IC_Stop(&htim_phase_z, TIM_CHANNEL_PHASE_Z);
-#endif
-#endif
-    // reset the data
-    dyno = datadyno_create_static();
-
-    HAL_GPIO_WritePin(GPIOA, LED_INDICATOR_1_Pin, GPIO_PIN_RESET);
 }
 
 /**
@@ -176,16 +184,19 @@ static void MX_NVIC_Init(void) {
     HAL_NVIC_SetPriority(TIM2_IRQn, 0, 0);
     HAL_NVIC_EnableIRQ(TIM2_IRQn);
     /* TIM3_IRQn interrupt configuration */
-    HAL_NVIC_SetPriority(TIM3_IRQn, 0, 0);
+    HAL_NVIC_SetPriority(TIM3_IRQn, 1, 0);
     HAL_NVIC_EnableIRQ(TIM3_IRQn);
     /* TIM4_IRQn interrupt configuration */
-    HAL_NVIC_SetPriority(TIM4_IRQn, 0, 0);
+    HAL_NVIC_SetPriority(TIM4_IRQn, 1, 0);
     HAL_NVIC_EnableIRQ(TIM4_IRQn);
+
+#ifdef WITH_PHASE_Z
     /* TIM5_IRQn interrupt configuration */
-    HAL_NVIC_SetPriority(TIM5_IRQn, 0, 0);
+    HAL_NVIC_SetPriority(TIM5_IRQn, 2, 0);
     HAL_NVIC_EnableIRQ(TIM5_IRQn);
+#endif
     /* SPI1_IRQn interrupt configuration */
-    HAL_NVIC_SetPriority(SPI1_IRQn, 0, 0);
+    HAL_NVIC_SetPriority(SPI1_IRQn, 2, 0);
     HAL_NVIC_EnableIRQ(SPI1_IRQn);
 }
 
@@ -193,7 +204,9 @@ static void MX_NVIC_DeInit(void) {
     HAL_NVIC_DisableIRQ(TIM2_IRQn);
     HAL_NVIC_DisableIRQ(TIM3_IRQn);
     HAL_NVIC_DisableIRQ(TIM4_IRQn);
+#ifdef WITH_PHASE_Z
     HAL_NVIC_DisableIRQ(TIM5_IRQn);
+#endif
     HAL_NVIC_DisableIRQ(SPI1_IRQn);
 }
 
@@ -216,9 +229,7 @@ static void MX_SPIMAX6675_Init(void) {
     hspi_max6675.Init.TIMode = SPI_TIMODE_DISABLE;
     hspi_max6675.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
     hspi_max6675.Init.CRCPolynomial = 9;
-    if (HAL_SPI_Init(&hspi_max6675) != HAL_OK) {
-        Error_Handler();
-    }
+    HANDLE_HAL_STATUS__(HAL_SPI_Init(&hspi_max6675));
 }
 
 static HAL_StatusTypeDef MAX6675_Temp(float *data_temp) {
@@ -226,15 +237,17 @@ static HAL_StatusTypeDef MAX6675_Temp(float *data_temp) {
     HAL_StatusTypeDef ret = HAL_OK;
 
     // Waits for Chip Ready(according to Datasheet, the max time for conversion is 220ms)
-    MAX6675_CS_GPIO_Port->BSRR = MAX6675_CS_Pin; // reset
-    ret = HAL_SPI_Receive(&hspi_max6675, data_RX, 1, 220);
-    MAX6675_CS_GPIO_Port->BSRR = (uint32_t)MAX6675_CS_Pin << 16U; // set
+    RESET_PIN(MAX6675_CS_GPIO_Port, MAX6675_CS_Pin);
+    ret = HAL_SPI_Receive(&hspi_max6675, data_RX, 1, 250);
+    SET_PIN(MAX6675_CS_GPIO_Port, MAX6675_CS_Pin);
+    if (ret != HAL_OK)
+        return ret;
 
     // convert [uint8_t; 2] to  uint16_t value
     uint16_t raw = (uint16_t)(((uint16_t)data_RX[0] << 8) | data_RX[1]);
     // State of Connecting
-    if (((raw >> 2) & 0x01) == 0 && ret == HAL_OK) {
-        *data_temp = (raw >> 3) * 0.25;
+    if (((raw >> 2) & 0x01) == 0) {
+        *data_temp = ((float)(raw >> 3)) * 0.25;
         return HAL_OK;
     }
     return ret;
@@ -253,26 +266,22 @@ static void MX_TIMEncoder_Init(void) {
     htim_encoder.Instance = TIM2;
     htim_encoder.Init.Prescaler = 0;
     htim_encoder.Init.CounterMode = TIM_COUNTERMODE_UP;
-    htim_encoder.Init.Period = 4294967295;
+    htim_encoder.Init.Period = 65535;
     htim_encoder.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
-    htim_encoder.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
+    htim_encoder.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
     sConfig.EncoderMode = TIM_ENCODERMODE_TI12;
     sConfig.IC1Polarity = TIM_ICPOLARITY_RISING;
     sConfig.IC1Selection = TIM_ICSELECTION_DIRECTTI;
-    sConfig.IC1Prescaler = TIM_ICPSC_DIV4;
-    sConfig.IC1Filter = 0;
+    sConfig.IC1Prescaler = TIM_ICPSC_DIV1;
+    sConfig.IC1Filter = 10;
     sConfig.IC2Polarity = TIM_ICPOLARITY_RISING;
     sConfig.IC2Selection = TIM_ICSELECTION_DIRECTTI;
-    sConfig.IC2Prescaler = TIM_ICPSC_DIV4;
-    sConfig.IC2Filter = 0;
-    if (HAL_TIM_Encoder_Init(&htim_encoder, &sConfig) != HAL_OK) {
-        Error_Handler();
-    }
+    sConfig.IC2Prescaler = TIM_ICPSC_DIV1;
+    sConfig.IC2Filter = 10;
+    HANDLE_HAL_STATUS__(HAL_TIM_Encoder_Init(&htim_encoder, &sConfig));
     sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
     sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
-    if (HAL_TIMEx_MasterConfigSynchronization(&htim_encoder, &sMasterConfig) != HAL_OK) {
-        Error_Handler();
-    }
+    HANDLE_HAL_STATUS__(HAL_TIMEx_MasterConfigSynchronization(&htim_encoder, &sMasterConfig));
 }
 
 /**
@@ -286,23 +295,17 @@ static void MX_TIMSend_Init(void) {
     TIM_MasterConfigTypeDef sMasterConfig = {0};
 
     htim_send_timer.Instance = TIM3;
-    htim_send_timer.Init.Prescaler = 9599;
+    htim_send_timer.Init.Prescaler = PRESCALAR_SEND_DATA;
     htim_send_timer.Init.CounterMode = TIM_COUNTERMODE_UP;
-    htim_send_timer.Init.Period = 1999;
+    htim_send_timer.Init.Period = PERIOD_SEND_DATA;
     htim_send_timer.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
     htim_send_timer.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
-    if (HAL_TIM_Base_Init(&htim_send_timer) != HAL_OK) {
-        Error_Handler();
-    }
+    HANDLE_HAL_STATUS__(HAL_TIM_Base_Init(&htim_send_timer));
     sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
-    if (HAL_TIM_ConfigClockSource(&htim_send_timer, &sClockSourceConfig) != HAL_OK) {
-        Error_Handler();
-    }
+    HANDLE_HAL_STATUS__(HAL_TIM_ConfigClockSource(&htim_send_timer, &sClockSourceConfig));
     sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
     sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
-    if (HAL_TIMEx_MasterConfigSynchronization(&htim_send_timer, &sMasterConfig) != HAL_OK) {
-        Error_Handler();
-    }
+    HANDLE_HAL_STATUS__(HAL_TIMEx_MasterConfigSynchronization(&htim_send_timer, &sMasterConfig));
 }
 
 /**
@@ -320,22 +323,15 @@ static void MX_TIMRpm_Init(void) {
     htim_rpm.Init.CounterMode = TIM_COUNTERMODE_UP;
     htim_rpm.Init.Period = 65535;
     htim_rpm.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
-    htim_rpm.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
-    if (HAL_TIM_IC_Init(&htim_rpm) != HAL_OK) {
-        Error_Handler();
-    }
+    HANDLE_HAL_STATUS__(HAL_TIM_IC_Init(&htim_rpm));
     sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
     sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
-    if (HAL_TIMEx_MasterConfigSynchronization(&htim_rpm, &sMasterConfig) != HAL_OK) {
-        Error_Handler();
-    }
+    HANDLE_HAL_STATUS__(HAL_TIMEx_MasterConfigSynchronization(&htim_rpm, &sMasterConfig));
     sConfigIC.ICPolarity = TIM_INPUTCHANNELPOLARITY_RISING;
     sConfigIC.ICSelection = TIM_ICSELECTION_DIRECTTI;
     sConfigIC.ICPrescaler = TIM_ICPSC_DIV1;
     sConfigIC.ICFilter = 0;
-    if (HAL_TIM_IC_ConfigChannel(&htim_rpm, &sConfigIC, TIM_CHANNEL_RPM) != HAL_OK) {
-        Error_Handler();
-    }
+    HANDLE_HAL_STATUS__(HAL_TIM_IC_ConfigChannel(&htim_rpm, &sConfigIC, TIM_CHANNEL_RPM));
 }
 
 #ifdef WITH_PHASE_Z
@@ -355,21 +351,15 @@ static void MX_TIMPhaseZ_Init(void) {
     htim_phase_z.Init.Period = 4294967295;
     htim_phase_z.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
     htim_phase_z.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
-    if (HAL_TIM_IC_Init(&htim_phase_z) != HAL_OK) {
-        Error_Handler();
-    }
+    HANDLE_HAL_STATUS__(HAL_TIM_IC_Init(&htim_phase_z));
     sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
     sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
-    if (HAL_TIMEx_MasterConfigSynchronization(&htim_phase_z, &sMasterConfig) != HAL_OK) {
-        Error_Handler();
-    }
+    HANDLE_HAL_STATUS__(HAL_TIMEx_MasterConfigSynchronization(&htim_phase_z, &sMasterConfig));
     sConfigIC.ICPolarity = TIM_INPUTCHANNELPOLARITY_RISING;
     sConfigIC.ICSelection = TIM_ICSELECTION_DIRECTTI;
     sConfigIC.ICPrescaler = TIM_ICPSC_DIV1;
     sConfigIC.ICFilter = 0;
-    if (HAL_TIM_IC_ConfigChannel(&htim_phase_z, &sConfigIC, TIM_CHANNEL_PHASE_Z) != HAL_OK) {
-        Error_Handler();
-    }
+    HANDLE_HAL_STATUS__(HAL_TIM_IC_ConfigChannel(&htim_phase_z, &sConfigIC, TIM_CHANNEL_PHASE_Z));
 }
 #endif
 
@@ -457,9 +447,7 @@ void SystemClock_Config(void) {
     RCC_OscInitStruct.PLL.PLLN = 192;
     RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
     RCC_OscInitStruct.PLL.PLLQ = 4;
-    if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK) {
-        Error_Handler();
-    }
+    HANDLE_HAL_STATUS__(HAL_RCC_OscConfig(&RCC_OscInitStruct));
 
     /** Initializes the CPU, AHB and APB buses clocks
      */
@@ -470,9 +458,7 @@ void SystemClock_Config(void) {
     RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV2;
     RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
 
-    if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_3) != HAL_OK) {
-        Error_Handler();
-    }
+    HANDLE_HAL_STATUS__(HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_3));
 }
 
 /**

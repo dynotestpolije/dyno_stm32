@@ -43,7 +43,7 @@ extern volatile uint8_t v_start_bit;
 
 uint8_t CDC_Transmit_FS(uint8_t *Buf, uint16_t Len);
 
-#define CDC_IS_USB_OPENED(hUsbFs) (((hUsbFs).dev_state == USBD_STATE_CONFIGURED) && (v_start_bit))
+#define CDC_IS_USB_OPENED(hUsbFs) (((hUsbFs)->dev_state == USBD_STATE_CONFIGURED) && (v_start_bit == DYNO_STARTED))
 #ifdef __cplusplus
 }
 #endif

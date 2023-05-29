@@ -50,10 +50,14 @@ void Error_Handler(void);
 #define RPM_INPUT_CAPTURE_Pin       GPIO_PIN_9
 #define RPM_INPUT_CAPTURE_GPIO_Port GPIOB
 
+#define SET_PIN(PORT, PIN)          ((PORT)->BSRR = (PIN))
+#define RESET_PIN(PORT, PIN)        ((PORT)->BSRR = (uint32_t)(PIN) << 16U)
+
 #define DYNO_STARTED                0x0
 #define DYNO_STOPPED                0x1
 #define SENDBIT_DISABLE             0x0
 #define SENDBIT_ENABLE              0x1
+
 #define MAX6675_NOT_CONNECTED       0x0
 #define MAX6675_CONNECTED           0x1
 
@@ -65,24 +69,21 @@ void Error_Handler(void);
 #endif
 
 #define CH_RPM CCR4
+
 #ifdef WITH_PHASE_Z
 #define CH_PHASE_Z CCR3
 #endif
 
-#define GET_COUNTER(HTIM)          (HTIM.Instance->CNT)
-#define GET_COUNTER_CH(HTIM, CH)   (HTIM.Instance->CH)
-#define RESET_COUNTER(HTIM)        (HTIM.Instance->CNT = 0)
-#define RESET_COUNTER_CH(HTIM, CH) (HTIM.Instance->CH = 0)
+#define GET_COUNTER(HTIM)   ((HTIM).Instance->CNT)
+#define RESET_COUNTER(HTIM) ((HTIM).Instance->CNT = 0)
 
 #define HANDLE_HAL_STATUS__(CALL)                                                                  \
-    if (CALL == HAL_ERROR) {                                                                       \
+    if (CALL != HAL_OK) {                                                                          \
         Error_Handler();                                                                           \
     }
 
 void MX_Start(void);
 void MX_Stop(void);
-
-/* USER CODE END Private defines */
 
 #ifdef __cplusplus
 }

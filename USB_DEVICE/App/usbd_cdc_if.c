@@ -107,7 +107,7 @@ uint8_t UserTxBufferFS[APP_TX_DATA_SIZE];
  * @{
  */
 
-volatile uint8_t v_start_bit = DYNO_STARTED;
+volatile uint8_t v_start_bit = DYNO_STOPPED;
 
 /* USER CODE BEGIN EXPORTED_VARIABLES */
 
